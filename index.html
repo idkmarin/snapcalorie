@@ -12,35 +12,52 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="top-card">
-        <p class="label">Calories remaining</p>
-        <h1 id="remainingCalories">0</h1>
-        <label class="goal-editor">
-          Daily goal
-          <input id="goalInput" type="number" min="1" step="1" />
-        </label>
-      </header>
+      <section class="camera-stage">
+        <video id="cameraPreview" playsinline autoplay muted></video>
+        <div class="camera-overlay">
+          <header class="top-card">
+            <p class="label">Calories remaining</p>
+            <h1 id="remainingCalories">0</h1>
+            <label class="goal-editor">
+              Daily goal
+              <input id="goalInput" type="number" min="1" step="1" />
+            </label>
+          </header>
 
-      <section class="capture-card">
-        <h2>Camera-first meal entry</h2>
-        <label class="camera-trigger" for="mealPhoto">Take meal photo</label>
-        <input id="mealPhoto" type="file" accept="image/*" capture="environment" />
-        <p id="photoStatus" class="muted">No photo selected yet.</p>
+          <p id="cameraStatus" class="status-badge">Camera permission needed to start.</p>
 
-        <form id="mealForm" class="meal-form">
-          <input id="mealName" type="text" placeholder="Meal name" required />
-          <input id="mealCalories" type="number" min="1" step="1" placeholder="Calories" required />
-          <button type="submit">Save meal</button>
-        </form>
+          <div class="capture-controls">
+            <button id="requestCameraBtn" class="control">Enable camera</button>
+            <button id="flashToggle" class="control secondary" disabled>Flash off</button>
+            <button id="uploadFallbackBtn" class="control secondary">Upload photo</button>
+            <input id="uploadFallbackInput" type="file" accept="image/*" />
+          </div>
 
-        <button id="manualModeBtn" class="secondary">Manual meal entry (forgot photo)</button>
+          <button id="shutterBtn" class="shutter" disabled aria-label="Take meal photo"></button>
+        </div>
+      </section>
+
+      <section id="analysisPanel" class="analysis-panel" aria-live="polite" hidden>
+        <h2>Confirm AI meal analysis</h2>
+        <p id="analysisStatus" class="muted">Analyzing plate...</p>
+        <img id="capturedPreview" alt="Captured meal preview" />
+
+        <div id="detectedItems"></div>
+        <button id="addItemBtn" class="secondary">Add item</button>
+
+        <div id="analysisTotals" class="totals"></div>
+
+        <div class="panel-actions">
+          <button id="retakeBtn" class="secondary">Retake</button>
+          <button id="saveMealBtn">Confirm & save</button>
+        </div>
       </section>
 
       <button id="historyToggle" class="history-toggle" aria-expanded="false">Swipe up for memories</button>
 
       <section id="historySheet" class="history-sheet" aria-hidden="true">
         <div id="sheetHandle" class="sheet-handle"></div>
-        <h2>Memories / History</h2>
+        <h2>Memories</h2>
         <ul id="mealList"></ul>
       </section>
     </main>
