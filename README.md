@@ -4,13 +4,14 @@ SnapCalorie is a camera-first calorie tracking PWA for fast phone logging.
 
 ## Features
 
-- Camera-first meal entry with mobile camera capture
-- Manual meal entry for forgotten photos
-- Calories remaining at the top of the app
-- Editable daily calorie goal
-- Swipe-up memories/history drawer
-- Meal editing and deletion
-- Local browser storage persistence
+- Full-screen camera-first meal capture flow
+- Explicit camera permission prompt and upload fallback
+- Flashlight toggle (when supported by device/browser camera APIs)
+- On-device AI-style food detection estimate after capture
+- Editable confirmation step for food names, quantities, and per-item macros
+- Auto-updating calories remaining after confirmed meal save
+- Swipe-up memories timeline with saved meal photos, date, macros, and expandable item details
+- Local browser storage persistence for goals and confirmed meal memories
 - Installable PWA support (manifest + service worker)
 
 ## Test on your phone
@@ -18,10 +19,10 @@ SnapCalorie is a camera-first calorie tracking PWA for fast phone logging.
 1. Clone this repository and serve it over HTTP/HTTPS from the repo root (for example: `python -m http.server 4173`).
 2. Ensure your phone and computer are on the same network.
 3. Open `http://<your-computer-ip>:4173` on your phone.
-4. Add a meal using camera capture, then refresh to confirm local persistence.
+4. Capture a meal photo, review the AI estimate, confirm/edit items, then refresh to confirm persistence.
 5. Use **Add to Home Screen** from the browser menu to verify installability.
 
 ## Notes
 
 - This project intentionally avoids Snapchat branding, logos, and proprietary UI.
-- AI food recognition is planned for a future release; current calorie entry is manual.
+- AI detection is a lightweight on-device estimate intended for quick confirmation edits before saving.
