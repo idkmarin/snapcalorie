@@ -8,7 +8,9 @@ SnapCalorie is a camera-first calorie tracking PWA for fast phone logging.
 - Explicit camera permission prompt and upload fallback
 - Flashlight toggle (when supported by device/browser camera APIs)
 - On-device AI-style food detection estimate after capture
+- Improved quantity heuristics for countable foods (for example eggs and peas)
 - Editable confirmation step for food names, quantities, and per-item macros
+- Per-item and overall AI confidence scoring shown during confirmation and in memories
 - Auto-updating calories remaining after confirmed meal save
 - Swipe-up memories timeline with saved meal photos, date, macros, and expandable item details
 - Local browser storage persistence for goals and confirmed meal memories

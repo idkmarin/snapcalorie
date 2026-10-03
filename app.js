@@ -218,11 +218,13 @@ async function startAnalysis(photoDataUrl) {
   analysisPanel.hidden = false;
   capturedPreview.src = photoDataUrl;
   analysisStatus.textContent = 'Analyzing plate with on-device AI estimate...';
-  currentDraft = { photoDataUrl, items: [] };
+  currentDraft = { photoDataUrl, items: [], analysisConfidence: 0, analysisSignals: null };
   renderDetectedItems();
   const analysis = await analyzePhoto(photoDataUrl);
   currentDraft.items = analysis.items.length > 0 ? analysis.items : [createDefaultItem()];
-  analysisStatus.textContent = `${analysis.note} Review and adjust before saving.`;
+  currentDraft.analysisConfidence = analysis.confidence;
+  currentDraft.analysisSignals = analysis.signals;
+  analysisStatus.textContent = `${analysis.note} Confidence ${analysis.confidence}% — review and adjust before saving.`;
   renderDetectedItems();
 }
 
@@ -230,11 +232,13 @@ async function analyzePhoto(dataUrl) {
   await sleep(450);
   const stats = await getImageStats(dataUrl);
   const seed = stableHash(dataUrl.slice(0, 600));
-  const primary = pickFoodByColor(stats.avg);
-  const secondary = pickSecondaryFood(stats.avg, primary, seed, stats.variance);
+  const primary = pickFoodByColor(stats.avg, stats);
+  const secondary = pickSecondaryFood(stats.avg, primary.food, seed, stats.variance);
   const candidates = [primary, secondary].filter(Boolean);
-  const items = candidates.map((food, index) => {
-    const quantity = estimateQuantity(food, seed + index * 17, stats.brightness, stats.variance);
+  const items = candidates.map((candidate, index) => {
+    const food = candidate.food ?? candidate;
+    const quantity = estimateQuantity(food, seed + index * 17, stats);
+    const confidence = estimateItemConfidence(food, candidate.distance ?? null, stats, quantity);
     return {
       name: food.name,
       count: quantity,
@@ -242,21 +246,37 @@ async function analyzePhoto(dataUrl) {
       caloriesPerUnit: food.caloriesPerUnit,
       proteinPerUnit: food.proteinPerUnit,
       carbsPerUnit: food.carbsPerUnit,
-      fatPerUnit: food.fatPerUnit
+      fatPerUnit: food.fatPerUnit,
+      confidence
     };
   });
+  const confidence = deriveAnalysisConfidence(items, stats, primary.distance);
   return {
     items,
-    note: 'AI estimated food type, amount, and macros from visual cues.'
+    confidence,
+    note: 'AI estimated food type, amount, and macros from visual cues.',
+    signals: {
+      yellowShare: round1(stats.yellowShare),
+      greenShare: round1(stats.greenShare),
+      grainShare: round1(stats.grainShare),
+      brightShare: round1(stats.brightShare),
+      darkShare: round1(stats.darkShare)
+    }
   };
 }
 
-function pickFoodByColor(avg) {
+function pickFoodByColor(avg, stats) {
+  if (stats.yellowShare > 11 && stats.brightShare > 42) {
+    return { food: foodCatalog.find((entry) => entry.name === 'Eggs') ?? foodCatalog[0], distance: 18 };
+  }
+  if (stats.greenShare > 9 && stats.variance > 22) {
+    return { food: foodCatalog.find((entry) => entry.name === 'Peas') ?? foodCatalog[1], distance: 20 };
+  }
   return foodCatalog.reduce((best, food) => {
     const distance = colorDistance(avg, food.signature);
-    if (!best || distance < best.distance) return { food, distance };
+    if (!best || distance < best.distance) return { food, distance: Math.round(distance) };
     return best;
-  }, null)?.food ?? foodCatalog[0];
+  }, null) ?? { food: foodCatalog[0], distance: 40 };
 }
 
 function pickSecondaryFood(avg, primary, seed, variance) {
@@ -265,15 +285,51 @@ function pickSecondaryFood(avg, primary, seed, variance) {
   return options[seed % options.length] ?? null;
 }
 
-function estimateQuantity(food, seed, brightness, variance) {
-  if (food.unit === 'egg') return clampNumber(1 + (seed % 4), 1, 4);
-  if (food.unit === 'pea') return clampNumber(25 + (seed % 95) + Math.round(variance / 4), 20, 160);
+function estimateQuantity(food, seed, stats) {
+  if (food.unit === 'egg') {
+    const largeRoundClusters = Math.max(1, Math.round(stats.yellowShare / 7));
+    const brightnessBias = stats.brightShare > 55 ? 1 : 0;
+    return clampNumber(largeRoundClusters + brightnessBias, 1, 4);
+  }
+  if (food.unit === 'pea') {
+    const peaEstimate = Math.round(stats.greenShare * 4 + stats.variance * 1.4 + (seed % 22));
+    return clampNumber(peaEstimate, 15, 180);
+  }
   if (food.unit === 'floret') return clampNumber(4 + (seed % 9), 3, 18);
   if (food.unit === 'g') {
-    const grams = 70 + (seed % 170) + Math.round(brightness / 6);
+    const grams = 70 + (seed % 170) + Math.round(stats.brightness / 6);
     return clampNumber(Math.round(grams), 60, 320);
   }
   return 1;
+}
+
+function estimateItemConfidence(food, distance, stats, quantity) {
+  let confidence = 86;
+  if (Number.isFinite(distance)) {
+    confidence -= clampNumber(Math.round(distance / 5), 0, 28);
+  }
+  if (food.unit === 'egg') {
+    if (stats.yellowShare > 11) confidence += 8;
+    if (quantity >= 2 && quantity <= 4) confidence += 4;
+    if (stats.greenShare > 16) confidence -= 10;
+  }
+  if (food.unit === 'pea') {
+    if (stats.greenShare > 10) confidence += 8;
+    if (quantity > 120) confidence -= 6;
+    if (stats.yellowShare > 14) confidence -= 8;
+  }
+  if (food.unit === 'g') {
+    confidence -= 4;
+  }
+  return clampNumber(Math.round(confidence), 45, 98);
+}
+
+function deriveAnalysisConfidence(items, stats, primaryDistance) {
+  if (items.length === 0) return 45;
+  const avgItemConfidence = items.reduce((sum, item) => sum + finiteOr(item.confidence, 60), 0) / items.length;
+  const imageReliability = 100 - clampNumber(Math.round(stats.variance / 1.5), 0, 22);
+  const colorPenalty = Number.isFinite(primaryDistance) ? clampNumber(Math.round(primaryDistance / 6), 0, 16) : 8;
+  return clampNumber(Math.round((avgItemConfidence + imageReliability) / 2 - colorPenalty), 40, 99);
 }
 
 function renderDetectedItems() {
@@ -282,6 +338,9 @@ function renderDetectedItems() {
   currentDraft.items.forEach((item, index) => {
     const wrapper = document.createElement('article');
     wrapper.className = 'detected-item';
+    const confidenceText = document.createElement('p');
+    confidenceText.className = 'muted';
+    confidenceText.textContent = `AI confidence: ${clampNumber(Math.round(finiteOr(item.confidence, 60)), 0, 99)}%`;
 
     const grid = document.createElement('div');
     grid.className = 'item-grid';
@@ -304,7 +363,7 @@ function renderDetectedItems() {
     removeBtn.textContent = 'Remove';
     actions.append(removeBtn);
 
-    wrapper.append(grid, actions);
+    wrapper.append(confidenceText, grid, actions);
     detectedItems.append(wrapper);
   });
   updateAnalysisTotals();
@@ -332,7 +391,8 @@ function updateAnalysisTotals() {
     return;
   }
   const totals = calculateTotals(currentDraft.items);
-  analysisTotals.textContent = `Total: ${Math.round(totals.calories)} kcal • P ${round1(totals.protein)}g • C ${round1(totals.carbs)}g • F ${round1(totals.fat)}g`;
+  const confidence = deriveDraftConfidence(currentDraft.items, currentDraft.analysisConfidence);
+  analysisTotals.textContent = `Total: ${Math.round(totals.calories)} kcal • P ${round1(totals.protein)}g • C ${round1(totals.carbs)}g • F ${round1(totals.fat)}g • Confidence ${confidence}%`;
 }
 
 function confirmAndSaveMeal() {
@@ -345,7 +405,8 @@ function confirmAndSaveMeal() {
       caloriesPerUnit: Number(item.caloriesPerUnit),
       proteinPerUnit: Number(item.proteinPerUnit),
       carbsPerUnit: Number(item.carbsPerUnit),
-      fatPerUnit: Number(item.fatPerUnit)
+      fatPerUnit: Number(item.fatPerUnit),
+      confidence: Number(item.confidence)
     }))
     .filter((item) => item.name && item.count > 0 && Number.isFinite(item.count))
     .map((item) => ({
@@ -353,7 +414,8 @@ function confirmAndSaveMeal() {
       caloriesPerUnit: finiteOr(item.caloriesPerUnit, 0),
       proteinPerUnit: finiteOr(item.proteinPerUnit, 0),
       carbsPerUnit: finiteOr(item.carbsPerUnit, 0),
-      fatPerUnit: finiteOr(item.fatPerUnit, 0)
+      fatPerUnit: finiteOr(item.fatPerUnit, 0),
+      confidence: clampNumber(Math.round(finiteOr(item.confidence, currentDraft.analysisConfidence || 60)), 0, 99)
     }));
 
   if (cleanedItems.length === 0) {
@@ -362,6 +424,7 @@ function confirmAndSaveMeal() {
   }
 
   const totals = calculateTotals(cleanedItems);
+  const confidence = deriveDraftConfidence(cleanedItems, currentDraft.analysisConfidence);
   state.meals.unshift({
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
@@ -372,6 +435,10 @@ function confirmAndSaveMeal() {
       protein: round1(totals.protein),
       carbs: round1(totals.carbs),
       fat: round1(totals.fat)
+    },
+    analysis: {
+      confidence,
+      signals: currentDraft.analysisSignals
     },
     source: 'camera-ai-confirmed'
   });
@@ -416,7 +483,7 @@ function renderMemories() {
 
     const summary = document.createElement('p');
     summary.className = 'memory-summary';
-    summary.textContent = `${meal.totals.calories} kcal • P ${meal.totals.protein}g • C ${meal.totals.carbs}g • F ${meal.totals.fat}g`;
+    summary.textContent = `${meal.totals.calories} kcal • P ${meal.totals.protein}g • C ${meal.totals.carbs}g • F ${meal.totals.fat}g • AI ${meal.analysis?.confidence ?? 60}%`;
 
     const toggle = document.createElement('button');
     toggle.className = 'memory-toggle';
@@ -435,9 +502,15 @@ function renderMemories() {
     meal.items.forEach((entry) => {
       const li = document.createElement('li');
       const itemCalories = Math.round(entry.count * entry.caloriesPerUnit);
-      li.textContent = `${entry.name}: ${entry.count} ${entry.unit} (~${itemCalories} kcal)`;
+      li.textContent = `${entry.name}: ${entry.count} ${entry.unit} (~${itemCalories} kcal, confidence ${finiteOr(entry.confidence, 60)}%)`;
       list.append(li);
     });
+    if (meal.analysis?.signals) {
+      const signalLine = document.createElement('p');
+      signalLine.className = 'muted';
+      signalLine.textContent = `Signals: yellow ${meal.analysis.signals.yellowShare}% • green ${meal.analysis.signals.greenShare}% • grain-tone ${meal.analysis.signals.grainShare}%`;
+      details.prepend(signalLine);
+    }
     details.append(list);
 
     item.append(date, photo, summary, toggle, details);
@@ -472,7 +545,8 @@ function normalizeMeal(meal) {
           caloriesPerUnit: finiteOr(Number(item.caloriesPerUnit), 0),
           proteinPerUnit: finiteOr(Number(item.proteinPerUnit), 0),
           carbsPerUnit: finiteOr(Number(item.carbsPerUnit), 0),
-          fatPerUnit: finiteOr(Number(item.fatPerUnit), 0)
+          fatPerUnit: finiteOr(Number(item.fatPerUnit), 0),
+          confidence: clampNumber(Math.round(finiteOr(Number(item.confidence), 60)), 0, 99)
         }))
         .filter((item) => item.name && Number.isFinite(item.count) && item.count > 0)
     : [];
@@ -485,7 +559,8 @@ function normalizeMeal(meal) {
       caloriesPerUnit: Math.round(Number(meal.calories)),
       proteinPerUnit: 0,
       carbsPerUnit: 0,
-      fatPerUnit: 0
+      fatPerUnit: 0,
+      confidence: 55
     });
   }
 
@@ -501,6 +576,28 @@ function normalizeMeal(meal) {
       protein: round1(finiteOr(Number(meal.totals?.protein), totals.protein)),
       carbs: round1(finiteOr(Number(meal.totals?.carbs), totals.carbs)),
       fat: round1(finiteOr(Number(meal.totals?.fat), totals.fat))
+    },
+    analysis: {
+      confidence: clampNumber(
+        Math.round(
+          finiteOr(
+            Number(meal.analysis?.confidence),
+            normalizedItems.reduce((sum, item) => sum + finiteOr(item.confidence, 60), 0) / normalizedItems.length
+          )
+        ),
+        0,
+        99
+      ),
+      signals:
+        meal.analysis?.signals && typeof meal.analysis.signals === 'object'
+          ? {
+              yellowShare: finiteOr(Number(meal.analysis.signals.yellowShare), 0),
+              greenShare: finiteOr(Number(meal.analysis.signals.greenShare), 0),
+              grainShare: finiteOr(Number(meal.analysis.signals.grainShare), 0),
+              brightShare: finiteOr(Number(meal.analysis.signals.brightShare), 0),
+              darkShare: finiteOr(Number(meal.analysis.signals.darkShare), 0)
+            }
+          : null
     },
     source: typeof meal.source === 'string' ? meal.source : 'camera-ai-confirmed'
   };
@@ -531,7 +628,16 @@ async function getImageStats(dataUrl) {
   canvas.height = 32;
   const context = canvas.getContext('2d');
   if (!context) {
-    return { avg: [180, 160, 120], brightness: 160, variance: 28 };
+    return {
+      avg: [180, 160, 120],
+      brightness: 160,
+      variance: 28,
+      yellowShare: 7,
+      greenShare: 6,
+      grainShare: 9,
+      brightShare: 36,
+      darkShare: 12
+    };
   }
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
@@ -540,19 +646,37 @@ async function getImageStats(dataUrl) {
   let b = 0;
   let brightness = 0;
   let variance = 0;
+  let yellow = 0;
+  let green = 0;
+  let grain = 0;
+  let bright = 0;
+  let dark = 0;
   const count = data.length / 4;
   for (let i = 0; i < data.length; i += 4) {
-    r += data[i];
-    g += data[i + 1];
-    b += data[i + 2];
-    const pixelBrightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    const red = data[i];
+    const greenValue = data[i + 1];
+    const blue = data[i + 2];
+    r += red;
+    g += greenValue;
+    b += blue;
+    const pixelBrightness = (red + greenValue + blue) / 3;
     brightness += pixelBrightness;
-    variance += Math.abs(data[i] - data[i + 1]) + Math.abs(data[i + 1] - data[i + 2]);
+    variance += Math.abs(red - greenValue) + Math.abs(greenValue - blue);
+    if (red > 150 && greenValue > 120 && blue < 145 && red > blue + 25) yellow += 1;
+    if (greenValue > red + 15 && greenValue > blue + 15) green += 1;
+    if (red > 140 && greenValue > 120 && blue > 80 && blue < 170) grain += 1;
+    if (pixelBrightness > 170) bright += 1;
+    if (pixelBrightness < 80) dark += 1;
   }
   return {
     avg: [r / count, g / count, b / count],
     brightness: brightness / count,
-    variance: variance / (count * 2)
+    variance: variance / (count * 2),
+    yellowShare: (yellow / count) * 100,
+    greenShare: (green / count) * 100,
+    grainShare: (grain / count) * 100,
+    brightShare: (bright / count) * 100,
+    darkShare: (dark / count) * 100
   };
 }
 
@@ -564,7 +688,8 @@ function createDefaultItem() {
     caloriesPerUnit: 0,
     proteinPerUnit: 0,
     carbsPerUnit: 0,
-    fatPerUnit: 0
+    fatPerUnit: 0,
+    confidence: 50
   };
 }
 
@@ -611,6 +736,14 @@ function finiteOr(value, fallback) {
 
 function clampNumber(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function deriveDraftConfidence(items, baselineConfidence = 60) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return clampNumber(Math.round(finiteOr(baselineConfidence, 60)), 0, 99);
+  }
+  const itemAverage = items.reduce((sum, item) => sum + clampNumber(Math.round(finiteOr(item.confidence, 60)), 0, 99), 0) / items.length;
+  return clampNumber(Math.round((itemAverage + finiteOr(baselineConfidence, itemAverage)) / 2), 0, 99);
 }
 
 function round1(value) {
