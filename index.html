@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fffc00" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>SnapCalorie</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="top-card">
+        <p class="label">Calories remaining</p>
+        <h1 id="remainingCalories">0</h1>
+        <label class="goal-editor">
+          Daily goal
+          <input id="goalInput" type="number" min="1" step="1" />
+        </label>
+      </header>
+
+      <section class="capture-card">
+        <h2>Camera-first meal entry</h2>
+        <label class="camera-trigger" for="mealPhoto">Take meal photo</label>
+        <input id="mealPhoto" type="file" accept="image/*" capture="environment" />
+        <p id="photoStatus" class="muted">No photo selected yet.</p>
+
+        <form id="mealForm" class="meal-form">
+          <input id="mealName" type="text" placeholder="Meal name" required />
+          <input id="mealCalories" type="number" min="1" step="1" placeholder="Calories" required />
+          <button type="submit">Save meal</button>
+        </form>
+
+        <button id="manualModeBtn" class="secondary">Manual meal entry (forgot photo)</button>
+      </section>
+
+      <button id="historyToggle" class="history-toggle" aria-expanded="false">Swipe up for memories</button>
+
+      <section id="historySheet" class="history-sheet" aria-hidden="true">
+        <div id="sheetHandle" class="sheet-handle"></div>
+        <h2>Memories / History</h2>
+        <ul id="mealList"></ul>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
